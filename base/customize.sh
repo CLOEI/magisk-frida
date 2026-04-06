@@ -176,8 +176,9 @@ fi
   chcon -R u:object_r:system_file:s0 "$F_TARGETDIR"
   chmod -R 755 "$F_TARGETDIR"
 
-  busybox unzip -qq -o "$ZIPFILE" "files/frida-server-$F_ARCH" -j -d "$F_TARGETDIR"
-  mv "$F_TARGETDIR/frida-server-$F_ARCH" "$F_TARGETDIR/frida-server"
+  busybox unzip -qq -o "$ZIPFILE" "files/frida-server-$F_ARCH" -d "$F_TARGETDIR"
+  mv "$F_TARGETDIR/files/frida-server-$F_ARCH" "$F_TARGETDIR/frida-server"
+  rmdir "$F_TARGETDIR/files"
 }
 
 # Only some special files require specific permissions
