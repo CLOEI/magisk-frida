@@ -10,8 +10,8 @@ set -x
 
 wait_for_boot
 
-frida-server -D
+ceserver &
 
-check_frida_is_up
+check_ceserver_is_up
 
 #EOF

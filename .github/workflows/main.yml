@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force_release:
-        description: 'Force release even if no Frida update is available'
+        description: 'Force release even if no Cheat Engine update is available'
         required: false
         default: false
         type: boolean
@@ -30,14 +30,61 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Check version
         run: |
-          uv run python3 main.py
-          echo "NEW_TAG=$(cat NEW_TAG.txt)" >> $GITHUB_ENV
+          uv run python3 -c "
+          import util, os
+          last_ce_tag = util.get_last_ce_tag()
+          last_project_tag = util.get_last_project_tag()
+          force_release = os.getenv('FORCE_RELEASE', 'false').lower() == 'true'
+          needs_update = last_ce_tag != util.strip_revision(last_project_tag)
+          if needs_update or force_release:
+              new_tag = util.get_next_revision(last_ce_tag)
+              with open('NEW_TAG.txt', 'w') as f:
+                  f.write(new_tag)
+              print(f'New tag: {new_tag}')
+          else:
+              print('Already up to date')
+          "
+          [ -f NEW_TAG.txt ] && echo "NEW_TAG=$(cat NEW_TAG.txt)" >> $GITHUB_ENV || true
         env:
           FORCE_RELEASE: ${{ github.event.inputs.force_release }}
 
+      - name: Build ceserver with NDK
+        if: hashFiles('NEW_TAG.txt') != ''
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          git clone --depth 1 https://github.com/cheat-engine/cheat-engine.git
+          cd "cheat-engine/Cheat Engine/ceserver/ndk-build/EXECUTABLE"
+          ndk-build
+
+      - name: Collect built binaries
+        if: hashFiles('NEW_TAG.txt') != ''
+        run: |
+          mkdir -p downloads
+          cp "cheat-engine/Cheat Engine/ceserver/ndk-build/EXECUTABLE/libs/arm64-v8a/ceserver"  downloads/ceserver-arm64
+          cp "cheat-engine/Cheat Engine/ceserver/ndk-build/EXECUTABLE/libs/armeabi-v7a/ceserver" downloads/ceserver-arm
+          cp "cheat-engine/Cheat Engine/ceserver/ndk-build/EXECUTABLE/libs/x86/ceserver"         downloads/ceserver-x86
+
+      - name: Package module
+        if: hashFiles('NEW_TAG.txt') != ''
+        run: |
+          uv run python3 -c "
+          import build
+          new_tag = open('NEW_TAG.txt').read().strip()
+          build.do_build(new_tag)
+          "
+
       - name: Upload artifact
+        if: hashFiles('NEW_TAG.txt') != ''
         uses: actions/upload-artifact@v4
         with:
           path: build/
@@ -48,4 +95,4 @@ jobs:
         with:
           artifacts: build/*.zip,build/updater.json
           tag: "${{ env.NEW_TAG }}"
-          body: https://github.com/frida/frida/releases
+          body: https://github.com/cheat-engine/cheat-engine/releases

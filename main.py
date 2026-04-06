@@ -1,15 +1,15 @@
-#!/user/bin/env python3
+#!/usr/bin/env python3
 #
-# MagiskFrida build process
+# MagiskCEServer build process
 #
-# 1. Checks if project has a tag that matches frida tag
+# 1. Checks if project has a tag that matches cheat-engine tag
 #    Yes -> continue
 #    No  -> must tag
 # 2. Checks if FORCE_RELEASE environment variable is set (GitHub Actions)
 #    Yes -> must tag
 #    No  -> continue
-# If tagging, writes new tag to 'NEW_TAG.txt' and builds
-# Otherwise, does nothing and builds with placeholder tag
+# If tagging, writes new tag to 'NEW_TAG.txt' and signals build
+# Otherwise, does nothing
 # 3. Deployment will execute only if 'NEW_TAG.txt' is present
 #
 # NOTE: Requires git
@@ -21,19 +21,19 @@ import os
 
 
 def main():
-    last_frida_tag = util.get_last_frida_tag()
+    last_ce_tag = util.get_last_ce_tag()
     last_project_tag = util.get_last_project_tag()
     new_project_tag = "0"
-    
+
     force_release = os.getenv('FORCE_RELEASE', 'false').lower() == 'true'
-    needs_update = last_frida_tag != util.strip_revision(last_project_tag)
-    
+    needs_update = last_ce_tag != util.strip_revision(last_project_tag)
+
     if needs_update or force_release:
-        new_project_tag = util.get_next_revision(last_frida_tag)
+        new_project_tag = util.get_next_revision(last_ce_tag)
         print(f"Update needed to {new_project_tag}")
-        
+
         if needs_update:
-            print(f"Reason: Frida updated from {util.strip_revision(last_project_tag)} to {last_frida_tag}")
+            print(f"Reason: CE updated from {util.strip_revision(last_project_tag)} to {last_ce_tag}")
         else:
             print("Reason: Force release requested via GitHub Actions")
 
@@ -43,7 +43,7 @@ def main():
     else:
         print("All good!")
 
-    build.do_build(last_frida_tag, new_project_tag)
+    build.do_build(new_project_tag)
 
 
 if __name__ == "__main__":

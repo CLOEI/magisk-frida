@@ -3,27 +3,27 @@ import requests
 import subprocess
 
 
-# 12.7.5-2, 12.7.5-3, ... -> 12.7.5
+# 7.5-2, 7.5-3, ... -> 7.5
 def strip_revision(tag) -> str:
     return tag.split('-', 1)[0]
 
 
-# gets last tag of GitHub project
+# gets last tag of GitHub project via releases API
 def get_last_github_tag(project_name) -> str:
     releases_url = f"https://api.github.com/repos/{project_name}/releases/latest"
     r = requests.get(releases_url)
     r.raise_for_status()
     releases = r.json()
-    # TODO: don't assume order
     last_release = releases["tag_name"]
     return last_release
 
 
-# gets last tag of frida
-def get_last_frida_tag() -> str:
-    last_frida_tag = get_last_github_tag('frida/frida')
-    print(f"Last frida tag: {last_frida_tag}")
-    return last_frida_tag
+# gets last tag of cheat-engine
+def get_last_ce_tag() -> str:
+    # CE releases have no binary assets but do publish release tags
+    last_ce_tag = get_last_github_tag('cheat-engine/cheat-engine')
+    print(f"Last cheat-engine tag: {last_ce_tag}")
+    return last_ce_tag
 
 
 # gets last tag of whole project
@@ -55,7 +55,7 @@ def exec_git_command(command_with_args: [str]) -> str:
     return result.decode()
 
 
-# gets next tag in the form 12.7.5-1, 12.7.5-2...
+# gets next tag in the form 7.5-1, 7.5-2...
 def get_next_revision(current_tag: str) -> str:
     i = 1
     while True:

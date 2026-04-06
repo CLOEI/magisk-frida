@@ -1,22 +1,25 @@
-#!/user/bin/env python3
+#!/usr/bin/env python3
 import logging
-import lzma
 import os
 from pathlib import Path
 import shutil
-import threading
+import subprocess
 import zipfile
-import concurrent.futures
 import json
 import re
-
-import requests
 
 PATH_BASE = Path(__file__).parent.resolve()
 PATH_BASE_MODULE: Path = PATH_BASE.joinpath("base")
 PATH_BUILD: Path = PATH_BASE.joinpath("build")
 PATH_BUILD_TMP: Path = PATH_BUILD.joinpath("tmp")
 PATH_DOWNLOADS: Path = PATH_BASE.joinpath("downloads")
+
+# NDK arch name -> module arch name
+ARCH_MAP = {
+    "arm64-v8a": "arm64",
+    "armeabi-v7a": "arm",
+    "x86": "x86",
+}
 
 logger = logging.getLogger()
 syslog = logging.StreamHandler()
@@ -26,32 +29,55 @@ logger.setLevel(logging.INFO)
 logger.addHandler(syslog)
 
 
-def download_file(url: str, path: Path):
-    file_name = url[url.rfind("/") + 1 :]
-    logger.info(f"Downloading '{file_name}' to '{path}'")
+def build_ceserver():
+    """Clone cheat-engine and build ceserver for all architectures using NDK."""
+    ndk_home = os.getenv("ANDROID_NDK_HOME") or os.getenv("NDK_HOME")
+    if not ndk_home:
+        raise RuntimeError(
+            "ANDROID_NDK_HOME or NDK_HOME environment variable must be set"
+        )
 
-    if path.exists():
-        return
+    ndk_build = Path(ndk_home) / "ndk-build"
+    if not ndk_build.exists():
+        raise RuntimeError(f"ndk-build not found at {ndk_build}")
 
-    r = requests.get(url, allow_redirects=True)
-    r.raise_for_status()
-    with open(path, "wb") as f:
-        f.write(r.content)
+    ce_dir = PATH_BASE / "cheat-engine"
+    ce_build_dir = ce_dir / "Cheat Engine" / "ceserver" / "ndk-build" / "EXECUTABLE"
 
-    logger.info("Done")
+    if not ce_dir.exists():
+        logger.info("Cloning cheat-engine repository...")
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "https://github.com/cheat-engine/cheat-engine.git",
+                str(ce_dir),
+            ],
+            check=True,
+        )
+    else:
+        logger.info("cheat-engine directory already exists, skipping clone")
 
+    logger.info("Building ceserver with ndk-build...")
+    subprocess.run(
+        [str(ndk_build)],
+        cwd=ce_build_dir,
+        check=True,
+    )
 
-def extract_file(archive_path: Path, dest_path: Path):
-    logger.info(f"Extracting '{archive_path.name}' to '{dest_path.name}'")
+    logger.info("Copying built binaries to downloads/")
+    PATH_DOWNLOADS.mkdir(parents=True, exist_ok=True)
 
-    with lzma.open(archive_path) as f:
-        file_content = f.read()
-        path = dest_path.parent
-
-        path.mkdir(parents=True, exist_ok=True)
-
-        with open(dest_path, "wb") as out:
-            out.write(file_content)
+    libs_dir = ce_build_dir / "libs"
+    for ndk_arch, mod_arch in ARCH_MAP.items():
+        src = libs_dir / ndk_arch / "ceserver"
+        if not src.exists():
+            raise FileNotFoundError(f"Expected built binary not found: {src}")
+        dst = PATH_DOWNLOADS / f"ceserver-{mod_arch}"
+        shutil.copy(src, dst)
+        logger.info(f"Copied {ndk_arch} -> ceserver-{mod_arch}")
 
 
 def generate_version_code(project_tag: str) -> int:
@@ -61,42 +87,40 @@ def generate_version_code(project_tag: str) -> int:
 
 
 def create_module_prop(path: Path, project_tag: str):
-    module_prop = f"""id=magisk-frida
-name=MagiskFrida
+    module_prop = f"""id=magisk-ceserver
+name=MagiskCEServer
 version={project_tag}
 versionCode={generate_version_code(project_tag)}
-author=ViRb3 & enovella
-updateJson=https://github.com/ViRb3/magisk-frida/releases/latest/download/updater.json
-description=Run frida-server on boot"""
+author=cloei
+updateJson=https://github.com/cloei/magisk-frida/releases/latest/download/updater.json
+description=Run ceserver on boot"""
 
     with open(path.joinpath("module.prop"), "w", newline="\n") as f:
         f.write(module_prop)
 
 
-def create_module(project_tag: str):
+def create_module():
     logger.info("Creating module")
 
     if PATH_BUILD_TMP.exists():
         shutil.rmtree(PATH_BUILD_TMP)
 
     shutil.copytree(PATH_BASE_MODULE, PATH_BUILD_TMP)
-    create_module_prop(PATH_BUILD_TMP, project_tag)
 
 
-def fill_module(arch: str, frida_tag: str, project_tag: str):
-    threading.current_thread().setName(arch)
+def fill_module(arch: str):
     logger.info(f"Filling module for arch '{arch}'")
 
-    frida_download_url = (
-        f"https://github.com/frida/frida/releases/download/{frida_tag}/"
-    )
-    frida_server = f"frida-server-{frida_tag}-android-{arch}.xz"
-    frida_server_path = PATH_DOWNLOADS.joinpath(frida_server)
+    src_path = PATH_DOWNLOADS / f"ceserver-{arch}"
+    if not src_path.exists():
+        raise FileNotFoundError(
+            f"ceserver binary not found: {src_path}. "
+            "Run build_ceserver() first or ensure binaries are in downloads/."
+        )
 
-    download_file(frida_download_url + frida_server, frida_server_path)
-    files_dir = PATH_BUILD_TMP.joinpath("files")
+    files_dir = PATH_BUILD_TMP / "files"
     files_dir.mkdir(exist_ok=True)
-    extract_file(frida_server_path, files_dir.joinpath(f"frida-server-{arch}"))
+    shutil.copy(src_path, files_dir / f"ceserver-{arch}")
 
 
 def create_updater_json(project_tag: str):
@@ -105,18 +129,18 @@ def create_updater_json(project_tag: str):
     updater = {
         "version": project_tag,
         "versionCode": generate_version_code(project_tag),
-        "zipUrl": f"https://github.com/ViRb3/magisk-frida/releases/download/{project_tag}/MagiskFrida-{project_tag}.zip",
-        "changelog": "https://raw.githubusercontent.com/ViRb3/magisk-frida/master/CHANGELOG.md",
+        "zipUrl": f"https://github.com/cloei/magisk-frida/releases/download/{project_tag}/MagiskCEServer-{project_tag}.zip",
+        "changelog": "https://github.com/cheat-engine/cheat-engine/releases",
     }
 
-    with open(PATH_BUILD.joinpath("updater.json"), "w", newline="\n") as f:
+    with open(PATH_BUILD / "updater.json", "w", newline="\n") as f:
         f.write(json.dumps(updater, indent=4))
 
 
 def package_module(project_tag: str):
     logger.info("Packaging module")
 
-    module_zip = PATH_BUILD.joinpath(f"MagiskFrida-{project_tag}.zip")
+    module_zip = PATH_BUILD / f"MagiskCEServer-{project_tag}.zip"
 
     with zipfile.ZipFile(module_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(PATH_BUILD_TMP):
@@ -124,27 +148,22 @@ def package_module(project_tag: str):
                 if file_name == "placeholder" or file_name == ".gitkeep":
                     continue
                 zf.write(
-                    Path(root).joinpath(file_name),
-                    arcname=Path(root).relative_to(PATH_BUILD_TMP).joinpath(file_name),
+                    Path(root) / file_name,
+                    arcname=Path(root).relative_to(PATH_BUILD_TMP) / file_name,
                 )
 
     shutil.rmtree(PATH_BUILD_TMP)
 
 
-def do_build(frida_tag: str, project_tag: str):
+def do_build(project_tag: str):
     PATH_DOWNLOADS.mkdir(parents=True, exist_ok=True)
     PATH_BUILD.mkdir(parents=True, exist_ok=True)
 
-    create_module(project_tag)
+    create_module()
+    create_module_prop(PATH_BUILD_TMP, project_tag)
 
-    archs = ["arm", "arm64", "x86", "x86_64"]
-    executor = concurrent.futures.ProcessPoolExecutor()
-    futures = [
-        executor.submit(fill_module, arch, frida_tag, project_tag) for arch in archs
-    ]
-    for future in concurrent.futures.as_completed(futures):
-        if future.exception() is not None:
-            raise future.exception()
+    for arch in ARCH_MAP.values():
+        fill_module(arch)
 
     package_module(project_tag)
     create_updater_json(project_tag)

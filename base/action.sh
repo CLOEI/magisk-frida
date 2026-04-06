@@ -9,24 +9,24 @@ set -x
 . $MODPATH/utils.sh
 
 [ -f $MODPATH/disable ] && {
-    echo "[-] Frida-server is disable"
-    string="description=Run frida-server on boot: ❌ (failed)"
+    echo "[-] ceserver is disabled"
+    string="description=Run ceserver on boot: ❌ (failed)"
     sed -i "s/^description=.*/$string/g" $MODPATH/module.prop
     sleep 1
     exit 0
 }
 
-result="$(busybox pgrep 'frida-server')"
+result="$(busybox pgrep 'ceserver')"
 if [ $result -gt 0 ]; then
-    echo "[-] Stopping Frida-server..."
+    echo "[-] Stopping ceserver..."
     busybox kill -9 $result
 else
-    echo "[-] Starting Frida server..."
-    frida-server -D
+    echo "[-] Starting ceserver..."
+    ceserver &
 fi
 
 sleep 1
 
-check_frida_is_up 1
+check_ceserver_is_up 1
 
 #EOF
